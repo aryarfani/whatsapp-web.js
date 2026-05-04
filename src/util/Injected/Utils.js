@@ -1078,12 +1078,12 @@ exports.LoadUtils = () => {
             .Contact.getModelsArray();
         return Promise.all(
             contacts.map(async (contact) => {
-                if (contact.isBusiness || contact.isEnterprise) {
-                    await window
-                        .require('WAWebCollections')
-                        .BusinessProfile.find(contact.id)
-                        .catch(() => {});
-                }
+                // if (contact.isBusiness || contact.isEnterprise) {
+                //     await window
+                //         .require('WAWebCollections')
+                //         .BusinessProfile.find(contact.id)
+                //         .catch(() => {});
+                // }
                 return window.WWebJS.getContactModel(contact);
             }),
         );
