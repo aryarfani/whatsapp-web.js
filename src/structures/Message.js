@@ -507,24 +507,21 @@ class Message extends Base {
     }
 
     /**
-     * Downloads and returns the attatched message media
-     * @returns {Promise<MessageMedia>}
+     * Downloads and returns the attached message media
+     * @returns {Promise<MessageMedia|undefined>}
      */
     async downloadMedia() {
-        if (!this.hasMedia) {
-            return undefined;
-        }
+        if (!this.hasMedia) return undefined;
 
+        const msgId =
+            this.id._serialized ||
+            this.id.$1 ||
+            `${this.id.fromMe}_${this.id.remote}_${this.id.id}`;
         const result = await this.client.pupPage.evaluate(async (msgId) => {
+            const { Msg } = window.require('WAWebCollections');
             const msg =
-                window.require('WAWebCollections').Msg.get(msgId) ||
-                (
-                    await window
-                        .require('WAWebCollections')
-                        .Msg.getMessagesById([msgId])
-                )?.messages?.[0];
-
-            // REUPLOADING mediaStage means the media is expired and the download button is spinning, cannot be downloaded now
+                Msg.get(msgId) ||
+                (await Msg.getMessagesById([msgId]))?.messages?.[0];
             if (
                 !msg ||
                 !msg.mediaData ||
@@ -532,60 +529,31 @@ class Message extends Base {
             ) {
                 return null;
             }
-            if (msg.mediaData.mediaStage != 'RESOLVED') {
-                // try to resolve media
-                await msg.downloadMedia({
-                    downloadEvenIfExpensive: true,
-                    rmrReason: 1,
-                });
-            }
 
-            if (
-                msg.mediaData.mediaStage.includes('ERROR') ||
-                msg.mediaData.mediaStage === 'FETCHING'
-            ) {
-                // media could not be downloaded
-                return undefined;
-            }
+            await msg.downloadMedia({
+                downloadEvenIfExpensive: true,
+                rmrReason: 1,
+                isUserInitiated: true,
+            });
 
-            try {
-                const mockQpl = {
-                    addAnnotations: function () {
-                        return this;
-                    },
-                    addPoint: function () {
-                        return this;
-                    },
-                };
-                const decryptedMedia = await window
-                    .require('WAWebDownloadManager')
-                    .downloadManager.downloadAndMaybeDecrypt({
-                        directPath: msg.directPath,
-                        encFilehash: msg.encFilehash,
-                        filehash: msg.filehash,
-                        mediaKey: msg.mediaKey,
-                        mediaKeyTimestamp: msg.mediaKeyTimestamp,
-                        type: msg.type,
-                        signal: new AbortController().signal,
-                        downloadQpl: mockQpl,
-                    });
+            const cache = window.require(
+                'WAWebMediaInMemoryBlobCache',
+            ).InMemoryMediaBlobCache;
+            const blob =
+                cache.get(msg.mediaObject?.filehash) ||
+                msg.mediaObject?.mediaBlob?.forceToBlob?.();
+            if (!blob) return null;
 
-                const data =
-                    await window.WWebJS.arrayBufferToBase64Async(
-                        decryptedMedia,
-                    );
-
-                return {
-                    data,
-                    mimetype: msg.mimetype,
-                    filename: msg.filename,
-                    filesize: msg.size,
-                };
-            } catch (e) {
-                if (e.status && e.status === 404) return undefined;
-                throw e;
-            }
-        }, this.id._serialized);
+            const data = await window.WWebJS.arrayBufferToBase64Async(
+                await blob.arrayBuffer(),
+            );
+            return {
+                data,
+                mimetype: msg.mimetype,
+                filename: msg.filename,
+                filesize: msg.size,
+            };
+        }, msgId);
 
         if (!result) return undefined;
         return new MessageMedia(
