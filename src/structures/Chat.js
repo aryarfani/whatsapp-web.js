@@ -195,9 +195,10 @@ class Chat extends Base {
 
     /**
      * Loads chat messages, sorted from earliest to latest.
-     * @param {Object} searchOptions Options for searching messages. Right now only limit and fromMe is supported.
+     * @param {Object} searchOptions Options for searching messages.
      * @param {Number} [searchOptions.limit] The amount of messages to return. If no limit is specified, the available messages will be returned. Note that the actual number of returned messages may be smaller if there aren't enough messages in the conversation. Set this to Infinity to load all messages.
      * @param {Boolean} [searchOptions.fromMe] Return only messages from the bot number or vise versa. To get all messages, leave the option undefined.
+     * @param {Boolean} [searchOptions.recoverCiphertext] Request WhatsApp's native placeholder resend for historical ciphertext messages. Recovery is asynchronous; refetch to observe resolved messages.
      * @returns {Promise<Array<Message>>}
      */
     async fetchMessages(searchOptions) {
@@ -234,6 +235,22 @@ class Chat extends Base {
                     if (msgs.length > searchOptions.limit) {
                         msgs.sort((a, b) => (a.t > b.t ? 1 : -1));
                         msgs = msgs.splice(msgs.length - searchOptions.limit);
+                    }
+                }
+
+                if (searchOptions && searchOptions.recoverCiphertext) {
+                    const ciphertextMessages = msgs.filter(
+                        (message) => message.type === 'ciphertext',
+                    );
+                    if (ciphertextMessages.length) {
+                        window
+                            .require(
+                                'WAWebNonMessageDataRequestPlaceholderMessageResendUtils',
+                            )
+                            .handlePlaceholderMsgsSeen(
+                                ciphertextMessages,
+                                true,
+                            );
                     }
                 }
 

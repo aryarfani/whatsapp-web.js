@@ -2066,6 +2066,11 @@ declare namespace WAWebJS {
          * Return only messages from the bot number or vise versa. To get all messages, leave the option undefined.
          */
         fromMe?: boolean;
+        /**
+         * Request WhatsApp's native placeholder resend for historical ciphertext messages.
+         * Recovery is asynchronous; refetch to observe resolved messages.
+         */
+        recoverCiphertext?: boolean;
     }
 
     /**

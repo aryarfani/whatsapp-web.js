@@ -69,7 +69,7 @@ class InterfaceController {
                     .Chat.find(msg.id.remote));
             const searchContext = await window
                 .require('WAWebChatMessageSearch')
-                .getSearchContext(chat, msg.id);
+                .getSearchContext({ chat, msgKey: msg.id });
             await window
                 .require('WAWebCmd')
                 .Cmd.openChatAt({ chat: chat, msgContext: searchContext });
