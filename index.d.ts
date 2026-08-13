@@ -2067,8 +2067,8 @@ declare namespace WAWebJS {
          */
         fromMe?: boolean;
         /**
-         * Request WhatsApp's native placeholder resend for historical ciphertext messages.
-         * Recovery is asynchronous; refetch to observe resolved messages.
+         * Request WhatsApp's native placeholder resend for historical ciphertext messages
+         * and wait up to 15 seconds for the fetched models to resolve.
          */
         recoverCiphertext?: boolean;
     }

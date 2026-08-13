@@ -198,7 +198,7 @@ class Chat extends Base {
      * @param {Object} searchOptions Options for searching messages.
      * @param {Number} [searchOptions.limit] The amount of messages to return. If no limit is specified, the available messages will be returned. Note that the actual number of returned messages may be smaller if there aren't enough messages in the conversation. Set this to Infinity to load all messages.
      * @param {Boolean} [searchOptions.fromMe] Return only messages from the bot number or vise versa. To get all messages, leave the option undefined.
-     * @param {Boolean} [searchOptions.recoverCiphertext] Request WhatsApp's native placeholder resend for historical ciphertext messages. Recovery is asynchronous; refetch to observe resolved messages.
+     * @param {Boolean} [searchOptions.recoverCiphertext] Request WhatsApp's native placeholder resend for historical ciphertext messages and wait up to 15 seconds for the fetched models to resolve.
      * @returns {Promise<Array<Message>>}
      */
     async fetchMessages(searchOptions) {
@@ -240,9 +240,26 @@ class Chat extends Base {
 
                 if (searchOptions && searchOptions.recoverCiphertext) {
                     const ciphertextMessages = msgs.filter(
-                        (message) => message.type === 'ciphertext',
+                        (message) =>
+                            message.type === 'ciphertext' &&
+                            !message.subtype?.endsWith('_unavailable_fanout'),
                     );
                     if (ciphertextMessages.length) {
+                        const recoveryWaiters = ciphertextMessages.map(
+                            (message) =>
+                                new Promise((resolve) => {
+                                    let timeout;
+                                    const finish = () => {
+                                        clearTimeout(timeout);
+                                        message.off('change:type', finish);
+                                        resolve();
+                                    };
+
+                                    message.on('change:type', finish);
+                                    timeout = setTimeout(finish, 15000);
+                                }),
+                        );
+
                         window
                             .require(
                                 'WAWebNonMessageDataRequestPlaceholderMessageResendUtils',
@@ -251,6 +268,8 @@ class Chat extends Base {
                                 ciphertextMessages,
                                 true,
                             );
+
+                        await Promise.all(recoveryWaiters);
                     }
                 }
 

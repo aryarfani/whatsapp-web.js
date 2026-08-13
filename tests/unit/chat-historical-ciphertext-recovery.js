@@ -8,7 +8,8 @@ describe('Chat historical ciphertext recovery', function () {
         delete global.window;
     });
 
-    it('requests one native recovery batch when fetchMessages opts in', async function () {
+    it('waits for native recovery and returns the updated message', async function () {
+        const typeListeners = new Set();
         const ciphertext = {
             id: { _serialized: 'false_group_cipher', fromMe: false },
             type: 'ciphertext',
@@ -17,6 +18,12 @@ describe('Chat historical ciphertext recovery', function () {
             body: '',
             from: '120363@g.us',
             to: '628000@c.us',
+            on(event, listener) {
+                if (event === 'change:type') typeListeners.add(listener);
+            },
+            off(event, listener) {
+                if (event === 'change:type') typeListeners.delete(listener);
+            },
         };
         const ordinary = {
             id: { _serialized: 'false_group_chat', fromMe: false },
@@ -46,6 +53,13 @@ describe('Chat historical ciphertext recovery', function () {
                         handlePlaceholderMsgsSeen(messages, isVisible) {
                             recoveryBatch = messages;
                             visibleFlag = isVisible;
+                            setTimeout(() => {
+                                ciphertext.type = 'chat';
+                                ciphertext.body = 'recovered text';
+                                for (const listener of typeListeners) {
+                                    listener(ciphertext);
+                                }
+                            }, 0);
                         },
                     };
                 }
@@ -70,6 +84,8 @@ describe('Chat historical ciphertext recovery', function () {
         });
 
         expect(messages).to.have.lengthOf(2);
+        expect(messages[0].type).to.equal('chat');
+        expect(messages[0].body).to.equal('recovered text');
         expect(recoveryBatch).to.deep.equal([ciphertext]);
         expect(visibleFlag).to.equal(true);
     });
