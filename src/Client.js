@@ -104,8 +104,14 @@ class Client extends EventEmitter {
 
         this.currentIndexHtml = null;
         this.lastLoggedOut = false;
+        this.lastLogoutCmdSource = null;
+        this.lastLogoutTrigger = null;
+        this.lastAuthAppState = null;
+        this.hasSyncedFired = false;
 
         Util.setFfmpegPath(this.options.ffmpegPath);
+
+        console.log('[wwebjs] Client constructor');
     }
 
     /**
@@ -282,6 +288,9 @@ class Client extends EventEmitter {
             this.pupPage,
             'onAuthAppStateChangedEvent',
             async (state) => {
+                this.lastAuthAppState = state;
+                console.log(`[wwebjs] onAuthAppStateChangedEvent state=${state}`);
+                this.emit('wwebjs_diagnostic', { kind: 'auth_app_state', state });
                 if (
                     state == 'UNPAIRED_IDLE' &&
                     !pairWithPhoneNumber.phoneNumber
@@ -296,6 +305,9 @@ class Client extends EventEmitter {
             this.pupPage,
             'onAppStateHasSyncedEvent',
             async () => {
+                this.hasSyncedFired = true;
+                console.log('[wwebjs] onAppStateHasSyncedEvent — emitting authenticated then ready');
+                this.emit('wwebjs_diagnostic', { kind: 'has_synced' });
                 const authEventPayload =
                     await this.authStrategy.getAuthEventPayload();
                 /**
@@ -390,7 +402,9 @@ class Client extends EventEmitter {
         await exposeFunctionIfAbsent(
             this.pupPage,
             'onLogoutEvent',
-            async () => {
+            async (cmdSource) => {
+                this.lastLogoutCmdSource = cmdSource || 'unknown';
+                console.log(`[wwebjs] onLogoutEvent cmdSource=${this.lastLogoutCmdSource} — setting lastLoggedOut=true, waiting for navigation`);
                 this.lastLoggedOut = true;
                 await this.pupPage
                     .waitForNavigation({ waitUntil: 'load', timeout: 5000 })
@@ -415,10 +429,10 @@ class Client extends EventEmitter {
                 );
             });
             Cmd.on('logout', async () => {
-                await window.onLogoutEvent();
+                await window.onLogoutEvent('logout');
             });
             Cmd.on('logout_from_bridge', async () => {
-                await window.onLogoutEvent();
+                await window.onLogoutEvent('logout_from_bridge');
             });
         });
     }
@@ -494,6 +508,9 @@ class Client extends EventEmitter {
 
         this.pupPage.on('framenavigated', async (frame) => {
             if (frame.url().includes('post_logout=1') || this.lastLoggedOut) {
+                const logoutTrigger = frame.url().includes('post_logout=1') ? 'url_post_logout_1' : 'lastLoggedOut_flag';
+                this.lastLogoutTrigger = logoutTrigger;
+                console.log(`[wwebjs] framenavigated → LOGOUT trigger=${logoutTrigger} url=${frame.url()}`);
                 this.emit(Events.DISCONNECTED, 'LOGOUT');
                 await this.authStrategy.logout();
                 await this.authStrategy.beforeBrowserInitialized();
@@ -848,6 +865,7 @@ class Client extends EventEmitter {
                      * @event Client#disconnected
                      * @param {WAState|"LOGOUT"} reason reason that caused the disconnect
                      */
+                    console.log(`[wwebjs] onAppStateChangedEvent → non-accepted state=${state}, emitting DISCONNECTED`);
                     await this.authStrategy.disconnect();
                     this.emit(Events.DISCONNECTED, state);
                     this.destroy();
