@@ -1306,8 +1306,7 @@ class Client extends EventEmitter {
      */
     async destroy() {
         const browser &#x3D; this.pupBrowser;
-        const isConnected &#x3D; browser?.isConnected?.();
-        if (isConnected) {
+        if (browser?.connected) {
             await browser.close();
         }
         await this.authStrategy.destroy();
@@ -1323,7 +1322,7 @@ class Client extends EventEmitter {
         await this.pupBrowser.close();
 
         let maxDelay &#x3D; 0;
-        while (this.pupBrowser.isConnected() &amp;amp;&amp;amp; maxDelay &amp;lt; 10) {
+        while (this.pupBrowser.connected &amp;amp;&amp;amp; maxDelay &amp;lt; 10) {
             // waits a maximum of 1 second before calling the AuthStrategy
             await new Promise((resolve) &#x3D;&gt; setTimeout(resolve, 100));
             maxDelay++;

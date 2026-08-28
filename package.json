@@ -39,7 +39,7 @@
         "mime": "3.0.0",
         "node-fetch": "2.7.0",
         "node-webpmux": "3.2.1",
-        "puppeteer": "24.38.0"
+        "puppeteer": "25.9.0"
     },
     "devDependencies": {
         "@commitlint/cli": "^20.4.3",
@@ -64,7 +64,7 @@
         "sinon": "^21.0.2"
     },
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=22.12.0"
     },
     "optionalDependencies": {
         "archiver": "7.0.1",
