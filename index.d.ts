@@ -1309,6 +1309,11 @@ declare namespace WAWebJS {
         delete: (everyone?: boolean, clearMedia?: boolean) => Promise<void>;
         /** Downloads and returns the attached message media */
         downloadMedia: () => Promise<MessageMedia>;
+        /** Downloads the attached message media to a local file in bounded chunks */
+        downloadMediaToFile: (
+            destinationPath: string,
+            options?: DownloadMediaToFileOptions,
+        ) => Promise<DownloadedMediaFile | undefined>;
         /** Returns the Chat this message was sent in */
         getChat: () => Promise<Chat>;
         /** Returns the Contact this message was sent from */
@@ -1614,6 +1619,24 @@ declare namespace WAWebJS {
         filename?: string;
         unsafeMime?: boolean;
         reqOptions?: RequestInit;
+    }
+
+    /** Metadata for media downloaded to a local file */
+    export interface DownloadMediaToFileOptions {
+        /** Maximum time for native download and chunk transfer, in milliseconds */
+        timeoutMs?: number;
+    }
+
+    /** Metadata for media downloaded to a local file */
+    export interface DownloadedMediaFile {
+        /** Resolved local destination path */
+        path: string;
+        /** MIME type of the attachment */
+        mimetype?: string | null;
+        /** Document file name */
+        filename?: string | null;
+        /** Document file size in bytes */
+        filesize?: number | null;
     }
 
     /** Media attached to a message */

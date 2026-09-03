@@ -1,5 +1,9 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const { randomUUID } = require('crypto');
+
 const Base = require('./Base');
 const MessageMedia = require('./MessageMedia');
 const Location = require('./Location');
@@ -562,6 +566,154 @@ class Message extends Base {
             result.filename,
             result.filesize,
         );
+    }
+
+    /**
+     * Downloads the attached message media to a local file in bounded chunks
+     * @param {string} destinationPath Local destination path
+     * @param {{timeoutMs?: number}} [options] Download deadline options
+     * @returns {Promise<{path: string, mimetype: string, filename: string, filesize: number}|undefined>}
+     */
+    async downloadMediaToFile(destinationPath, options = {}) {
+        if (!this.hasMedia) return undefined;
+
+        const parsedTimeoutMs = Number(options.timeoutMs);
+        const timeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
+            ? parsedTimeoutMs
+            : null;
+        const deadline = timeoutMs ? Date.now() + timeoutMs : null;
+
+        const msgId =
+            this.id._serialized ||
+            this.id.$1 ||
+            `${this.id.fromMe}_${this.id.remote}_${this.id.id}`;
+        const mediaInfo = await this.client.pupPage.evaluate(async (msgId, timeoutMs) => {
+            const { Msg } = window.require('WAWebCollections');
+            const msg =
+                Msg.get(msgId) ||
+                (await Msg.getMessagesById([msgId]))?.messages?.[0];
+            if (
+                !msg ||
+                !msg.mediaData ||
+                msg.mediaData.mediaStage === 'REUPLOADING'
+            ) {
+                return null;
+            }
+
+            let timeoutHandle;
+            try {
+                const download = msg.downloadMedia({
+                    downloadEvenIfExpensive: true,
+                    rmrReason: 1,
+                    isUserInitiated: true,
+                });
+                await (timeoutMs
+                    ? Promise.race([
+                        download,
+                        new Promise((_, reject) => {
+                            timeoutHandle = setTimeout(
+                                () => reject(new Error('downloadMediaToFile timeout')),
+                                timeoutMs,
+                            );
+                        }),
+                    ])
+                    : download);
+            } finally {
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+            }
+
+            const cache = window.require(
+                'WAWebMediaInMemoryBlobCache',
+            ).InMemoryMediaBlobCache;
+            const blob =
+                cache.get(msg.mediaObject?.filehash) ||
+                msg.mediaObject?.mediaBlob?.forceToBlob?.();
+            if (!blob) return null;
+
+            return {
+                blobSize: blob.size,
+                mimetype: msg.mimetype,
+                filename: msg.filename,
+                filesize: msg.size,
+            };
+        }, msgId, timeoutMs);
+
+        if (!mediaInfo) return undefined;
+
+        const destination = path.resolve(destinationPath);
+        const partialPath = `${destination}.part-${process.pid}-${randomUUID()}`;
+        const chunkSize = 512 * 1024;
+        let fileHandle;
+
+        try {
+            await fs.promises.mkdir(path.dirname(destination), {
+                recursive: true,
+            });
+            fileHandle = await fs.promises.open(partialPath, 'w', 0o600);
+
+            for (
+                let offset = 0;
+                offset < mediaInfo.blobSize;
+                offset += chunkSize
+            ) {
+                if (deadline && Date.now() >= deadline) {
+                    throw new Error('downloadMediaToFile timeout');
+                }
+                const end = Math.min(offset + chunkSize, mediaInfo.blobSize);
+                const encodedChunk = await this.client.pupPage.evaluate(
+                    async (msgId, start, end) => {
+                        const { Msg } = window.require('WAWebCollections');
+                        const msg =
+                            Msg.get(msgId) ||
+                            (await Msg.getMessagesById([msgId]))?.messages?.[0];
+                        if (!msg) return null;
+
+                        const cache = window.require(
+                            'WAWebMediaInMemoryBlobCache',
+                        ).InMemoryMediaBlobCache;
+                        const blob =
+                            cache.get(msg.mediaObject?.filehash) ||
+                            msg.mediaObject?.mediaBlob?.forceToBlob?.();
+                        if (!blob) return null;
+
+                        const chunk = await blob
+                            .slice(start, end)
+                            .arrayBuffer();
+                        return window.WWebJS.arrayBufferToBase64Async(chunk);
+                    },
+                    msgId,
+                    offset,
+                    end,
+                );
+                if (deadline && Date.now() >= deadline) {
+                    throw new Error('downloadMediaToFile timeout');
+                }
+                if (encodedChunk === null) {
+                    throw new Error('Media blob unavailable during transfer');
+                }
+
+                const chunk = Buffer.from(encodedChunk, 'base64');
+                if (chunk.length !== end - offset) {
+                    throw new Error('Media chunk length mismatch');
+                }
+                await fileHandle.write(chunk);
+            }
+
+            await fileHandle.close();
+            fileHandle = undefined;
+            await fs.promises.rename(partialPath, destination);
+
+            return {
+                path: destination,
+                mimetype: mediaInfo.mimetype,
+                filename: mediaInfo.filename,
+                filesize: mediaInfo.filesize ?? mediaInfo.blobSize,
+            };
+        } catch (error) {
+            await fileHandle?.close().catch(() => {});
+            await fs.promises.unlink(partialPath).catch(() => {});
+            throw error;
+        }
     }
 
     /**
