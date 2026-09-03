@@ -571,72 +571,95 @@ class Message extends Base {
     /**
      * Downloads the attached message media to a local file in bounded chunks
      * @param {string} destinationPath Local destination path
-     * @param {{timeoutMs?: number}} [options] Download deadline options
+     * @param {{timeoutMs?: number, releaseBrowserMemory?: boolean}} [options] Download options
      * @returns {Promise<{path: string, mimetype: string, filename: string, filesize: number}|undefined>}
      */
     async downloadMediaToFile(destinationPath, options = {}) {
         if (!this.hasMedia) return undefined;
 
         const parsedTimeoutMs = Number(options.timeoutMs);
-        const timeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
-            ? parsedTimeoutMs
-            : null;
+        const timeoutMs =
+            Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
+                ? parsedTimeoutMs
+                : null;
         const deadline = timeoutMs ? Date.now() + timeoutMs : null;
 
         const msgId =
             this.id._serialized ||
             this.id.$1 ||
             `${this.id.fromMe}_${this.id.remote}_${this.id.id}`;
-        const mediaInfo = await this.client.pupPage.evaluate(async (msgId, timeoutMs) => {
-            const { Msg } = window.require('WAWebCollections');
-            const msg =
-                Msg.get(msgId) ||
-                (await Msg.getMessagesById([msgId]))?.messages?.[0];
-            if (
-                !msg ||
-                !msg.mediaData ||
-                msg.mediaData.mediaStage === 'REUPLOADING'
-            ) {
-                return null;
-            }
+        const releaseBrowserMemory = options.releaseBrowserMemory === true;
+        const mediaInfo = await this.client.pupPage.evaluate(
+            async (msgId, timeoutMs, reserveBrowserCache) => {
+                const { Msg } = window.require('WAWebCollections');
+                const msg =
+                    Msg.get(msgId) ||
+                    (await Msg.getMessagesById([msgId]))?.messages?.[0];
+                if (
+                    !msg ||
+                    !msg.mediaData ||
+                    msg.mediaData.mediaStage === 'REUPLOADING'
+                ) {
+                    return null;
+                }
 
-            let timeoutHandle;
-            try {
-                const download = msg.downloadMedia({
-                    downloadEvenIfExpensive: true,
-                    rmrReason: 1,
-                    isUserInitiated: true,
-                });
-                await (timeoutMs
-                    ? Promise.race([
-                        download,
-                        new Promise((_, reject) => {
-                            timeoutHandle = setTimeout(
-                                () => reject(new Error('downloadMediaToFile timeout')),
-                                timeoutMs,
-                            );
-                        }),
-                    ])
-                    : download);
-            } finally {
-                if (timeoutHandle) clearTimeout(timeoutHandle);
-            }
+                let timeoutHandle;
+                try {
+                    const download = msg.downloadMedia({
+                        downloadEvenIfExpensive: true,
+                        rmrReason: 1,
+                        isUserInitiated: true,
+                    });
+                    await (timeoutMs
+                        ? Promise.race([
+                              download,
+                              new Promise((_, reject) => {
+                                  timeoutHandle = setTimeout(
+                                      () =>
+                                          reject(
+                                              new Error(
+                                                  'downloadMediaToFile timeout',
+                                              ),
+                                          ),
+                                      timeoutMs,
+                                  );
+                              }),
+                          ])
+                        : download);
+                } finally {
+                    if (timeoutHandle) clearTimeout(timeoutHandle);
+                }
 
-            const cache = window.require(
-                'WAWebMediaInMemoryBlobCache',
-            ).InMemoryMediaBlobCache;
-            const blob =
-                cache.get(msg.mediaObject?.filehash) ||
-                msg.mediaObject?.mediaBlob?.forceToBlob?.();
-            if (!blob) return null;
+                const cache = window.require(
+                    'WAWebMediaInMemoryBlobCache',
+                ).InMemoryMediaBlobCache;
+                const blob =
+                    cache.get(msg.mediaObject?.filehash) ||
+                    msg.mediaObject?.mediaBlob?.forceToBlob?.();
+                if (!blob) return null;
 
-            return {
-                blobSize: blob.size,
-                mimetype: msg.mimetype,
-                filename: msg.filename,
-                filesize: msg.size,
-            };
-        }, msgId, timeoutMs);
+                const filehash = msg.mediaObject?.filehash;
+                const cacheUsageReserved = Boolean(
+                    reserveBrowserCache &&
+                    filehash &&
+                    typeof cache.increaseUsageCount === 'function' &&
+                    typeof cache.decreaseUsageCount === 'function',
+                );
+                if (cacheUsageReserved) cache.increaseUsageCount(filehash);
+
+                return {
+                    blobSize: blob.size,
+                    mimetype: msg.mimetype,
+                    filename: msg.filename,
+                    filesize: msg.size,
+                    filehash,
+                    cacheUsageReserved,
+                };
+            },
+            msgId,
+            timeoutMs,
+            releaseBrowserMemory,
+        );
 
         if (!mediaInfo) return undefined;
 
@@ -713,6 +736,47 @@ class Message extends Base {
             await fileHandle?.close().catch(() => {});
             await fs.promises.unlink(partialPath).catch(() => {});
             throw error;
+        } finally {
+            if (mediaInfo.cacheUsageReserved) {
+                let cacheEntryDeleted = false;
+                try {
+                    cacheEntryDeleted = await this.client.pupPage.evaluate(
+                        (filehash) => {
+                            const cache = window.require(
+                                'WAWebMediaInMemoryBlobCache',
+                            ).InMemoryMediaBlobCache;
+                            cache.decreaseUsageCount(filehash);
+                            const usageCount =
+                                typeof cache.$6 === 'function'
+                                    ? cache.$6(filehash)
+                                    : null;
+                            if (
+                                usageCount === 0 &&
+                                typeof cache.delete === 'function'
+                            ) {
+                                cache.delete(filehash);
+                                return true;
+                            }
+                            return false;
+                        },
+                        mediaInfo.filehash,
+                    );
+                } catch (ignoredError) {
+                    // Browser cache cleanup must not invalidate a completed file.
+                }
+
+                if (cacheEntryDeleted) {
+                    let cdp;
+                    try {
+                        cdp = await this.client.pupPage.createCDPSession();
+                        await cdp.send('HeapProfiler.collectGarbage');
+                    } catch (ignoredError) {
+                        // Garbage collection is an optional memory optimization.
+                    } finally {
+                        await cdp?.detach().catch(() => {});
+                    }
+                }
+            }
         }
     }
 

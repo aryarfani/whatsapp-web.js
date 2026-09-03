@@ -1625,6 +1625,8 @@ declare namespace WAWebJS {
     export interface DownloadMediaToFileOptions {
         /** Maximum time for native download and chunk transfer, in milliseconds */
         timeoutMs?: number;
+        /** Release the downloaded Blob from WhatsApp Web's browser cache after transfer */
+        releaseBrowserMemory?: boolean;
     }
 
     /** Metadata for media downloaded to a local file */

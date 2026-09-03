@@ -15,7 +15,15 @@ describe('Message media download', function () {
         }
     });
 
-    function createMediaMessage({ blob, onArrayBuffer, downloadMedia }) {
+    function createMediaMessage({
+        blob,
+        onArrayBuffer,
+        downloadMedia,
+        onCacheDelete,
+        onCacheUsage,
+        onCollectGarbage,
+    }) {
+        let cacheUsageCount = 0;
         const serializedId =
             'false_240131655135475@lid_ACA773752D55923CD5C46178E1F6CC08';
         const waMessage = {
@@ -51,6 +59,24 @@ describe('Message media download', function () {
                                 expect(filehash).to.equal('file-hash');
                                 return blob;
                             },
+                            delete(filehash) {
+                                expect(filehash).to.equal('file-hash');
+                                onCacheDelete?.(filehash);
+                            },
+                            increaseUsageCount(filehash) {
+                                expect(filehash).to.equal('file-hash');
+                                cacheUsageCount += 1;
+                                onCacheUsage?.('increase', cacheUsageCount);
+                            },
+                            decreaseUsageCount(filehash) {
+                                expect(filehash).to.equal('file-hash');
+                                cacheUsageCount -= 1;
+                                onCacheUsage?.('decrease', cacheUsageCount);
+                            },
+                            $6(filehash) {
+                                expect(filehash).to.equal('file-hash');
+                                return cacheUsageCount;
+                            },
                         },
                     };
                 }
@@ -61,6 +87,10 @@ describe('Message media download', function () {
         const client = {
             pupPage: {
                 evaluate: async (callback, ...args) => callback(...args),
+                createCDPSession: async () => ({
+                    send: async (method) => onCollectGarbage?.(method),
+                    detach: async () => undefined,
+                }),
             },
         };
         return new Message(client, {
@@ -175,6 +205,36 @@ describe('Message media download', function () {
                 .readdirSync(directory)
                 .filter((name) => name.startsWith('video.mp4.part-')),
         ).to.deep.equal([]);
+    });
+
+    it('releases the exact browser media cache entry after publishing the file when requested', async function () {
+        const events = [];
+        const directory = fs.mkdtempSync(
+            path.join(os.tmpdir(), 'wwebjs-media-file-'),
+        );
+        temporaryDirectories.push(directory);
+        const destination = path.join(directory, 'video.mp4');
+        const message = createMediaMessage({
+            blob: new Blob([Buffer.from('release me')]),
+            onCacheDelete: (filehash) => {
+                expect(fs.existsSync(destination)).to.equal(true);
+                events.push(`delete:${filehash}`);
+            },
+            onCacheUsage: (direction, count) =>
+                events.push(`${direction}:${count}`),
+            onCollectGarbage: (method) => events.push(`cdp:${method}`),
+        });
+
+        await message.downloadMediaToFile(destination, {
+            releaseBrowserMemory: true,
+        });
+
+        expect(events).to.deep.equal([
+            'increase:1',
+            'decrease:0',
+            'delete:file-hash',
+            'cdp:HeapProfiler.collectGarbage',
+        ]);
     });
 
     it('removes the partial file when a later media chunk fails', async function () {
