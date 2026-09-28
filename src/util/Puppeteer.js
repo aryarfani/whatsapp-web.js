@@ -12,17 +12,18 @@
  */
 async function exposeFunctionIfAbsent(page, name, fn) {
     const debugPrefix = '[DEBUG-wwebjs-inject]';
+    const debugEnabled = process.env.WWEBJS_DEBUG_INJECT === 'true';
     const pageState = () => ({
         closed: page.isClosed(),
         url: page.url(),
     });
-    console.error(debugPrefix, 'evaluate:start', name, pageState());
+    if (debugEnabled) console.error(debugPrefix, 'evaluate:start', name, pageState());
     let exist;
     try {
         exist = await page.evaluate((name) => {
             return !!window[name];
         }, name);
-        console.error(debugPrefix, 'evaluate:done', name, { exist, ...pageState() });
+        if (debugEnabled) console.error(debugPrefix, 'evaluate:done', name, { exist, ...pageState() });
     } catch (error) {
         console.error(debugPrefix, 'evaluate:error', name, pageState(), error);
         throw error;
@@ -30,10 +31,10 @@ async function exposeFunctionIfAbsent(page, name, fn) {
     if (exist) {
         return;
     }
-    console.error(debugPrefix, 'expose:start', name, pageState());
+    if (debugEnabled) console.error(debugPrefix, 'expose:start', name, pageState());
     try {
         await page.exposeFunction(name, fn);
-        console.error(debugPrefix, 'expose:done', name, pageState());
+        if (debugEnabled) console.error(debugPrefix, 'expose:done', name, pageState());
     } catch (error) {
         console.error(debugPrefix, 'expose:error', name, pageState(), error);
         throw error;
