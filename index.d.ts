@@ -229,6 +229,14 @@ declare namespace WAWebJS {
             options?: { chatId?: string; page?: number; limit?: number },
         ): Promise<Message[]>;
 
+        /** Fetch individual calls available to the linked session, newest first.
+         * Defaults to 100 records; limit: Infinity fetches all available history.
+         * Experimental: uses private WhatsApp Web modules.
+         */
+        getCallHistory(options?: {
+            limit?: number;
+        }): Promise<CallHistoryRecord[]>;
+
         /** Marks the client as online */
         sendPresenceAvailable(): Promise<void>;
 
@@ -701,6 +709,24 @@ declare namespace WAWebJS {
         device_model: string;
         /** OS build number */
         os_build_number: string;
+    }
+
+    /** Individual historical call with cached contact details and native metadata. */
+    export interface CallHistoryRecord {
+        id: string;
+        chatId: string;
+        timestamp: number;
+        fromMe: boolean;
+        direction: 'incoming' | 'outgoing';
+        contact: { id: string; name: string; number: string | null } | null;
+        callOutcome?: string | null;
+        isVideoCall?: boolean | null;
+        callDuration?: number | null;
+        callCreator?: unknown;
+        callParticipants?: unknown[] | null;
+        isCallLink?: boolean | null;
+        rawData: Record<string, unknown>;
+        [field: string]: unknown;
     }
 
     /** Options for initializing the whatsapp client */

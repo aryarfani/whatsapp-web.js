@@ -1679,6 +1679,85 @@ class Client extends EventEmitter {
     }
 
     /**
+     * Fetch individual call-log records available to this linked session,
+     * newest first. Unlike incoming_call, this includes historical calls.
+     * Uses private WhatsApp Web modules; availability depends on its version.
+     * @param {Object} [options]
+     * @param {number} [options.limit=100] Maximum records; Infinity fetches all.
+     * @returns {Promise<Object[]>} Call metadata, cached contact and rawData.
+     */
+    async getCallHistory({ limit = 100 } = {}) {
+        if (limit !== Infinity && (!Number.isInteger(limit) || limit < 1)) {
+            throw new RangeError(
+                'limit must be a positive integer or Infinity',
+            );
+        }
+        return this.pupPage.evaluate(
+            async (maximum) => {
+                const CallLogs = window.require(
+                    'WAWebFtsMsgsCallLogCollection',
+                );
+                const contacts = window.require(
+                    'WAWebContactCollection',
+                ).ContactCollection;
+                const getters = window.require('WAWebFrontendContactGetters');
+                const collection = new CallLogs();
+                try {
+                    let eof = false;
+                    while (
+                        !eof &&
+                        (maximum === null ||
+                            collection.getModelsArray().length < maximum)
+                    ) {
+                        const result = await collection.search({
+                            count: 50,
+                            searchTerm: '',
+                            direction: 'before',
+                        });
+                        eof = result.eof;
+                    }
+                    const models = collection
+                        .getModelsArray()
+                        .slice()
+                        .sort((a, b) => b.t - a.t);
+                    return (
+                        maximum === null ? models : models.slice(0, maximum)
+                    ).map((msg) => {
+                        const rawData = msg.serialize();
+                        const contact = contacts.get(msg.id.remote);
+                        const callData = Object.fromEntries(
+                            Object.entries(rawData).filter(([key]) =>
+                                /call|bytesSent|bytesReceived|terminatedByDeviceSwitch|selfOtherDeviceConnected/i.test(
+                                    key,
+                                ),
+                            ),
+                        );
+                        return {
+                            ...callData,
+                            id: msg.id.toString(),
+                            chatId: msg.id.remote.toString(),
+                            timestamp: msg.t,
+                            fromMe: msg.id.fromMe,
+                            direction: msg.id.fromMe ? 'outgoing' : 'incoming',
+                            contact: contact
+                                ? {
+                                      id: contact.id.toString(),
+                                      name: getters.getDisplayName(contact),
+                                      number: contact.phoneNumber?.user ?? null,
+                                  }
+                                : null,
+                            rawData,
+                        };
+                    });
+                } finally {
+                    collection.stopListening();
+                }
+            },
+            limit === Infinity ? null : limit,
+        );
+    }
+
+    /**
      * Get all current chat instances
      * @returns {Promise<Array<Chat>>}
      */
