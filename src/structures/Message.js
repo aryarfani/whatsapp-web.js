@@ -132,7 +132,10 @@ class Message extends Base {
          * @type {boolean}
          */
         this.isStatus =
-            data.isStatusV3 || data.id.remote === 'status@broadcast';
+            data.isStatusV3 ||
+            (typeof data.id.remote === 'object'
+                ? data.id.remote?._serialized
+                : data.id.remote) === 'status@broadcast';
 
         /**
          * Indicates if the message was starred
