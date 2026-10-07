@@ -165,6 +165,12 @@ declare namespace WAWebJS {
         /** Returns the version of WhatsApp Web currently being run */
         getWWebVersion(): Promise<string>;
 
+        /** Returns whether this Web session has joined the external beta. */
+        isBetaEnabled(): Promise<boolean>;
+
+        /** Sets external beta enrollment and returns the resulting state. Does not reload the page. */
+        setBetaEnabled(enabled: boolean): Promise<boolean>;
+
         /** Sets up events and requirements, kicks off authentication request */
         initialize(): Promise<void>;
 

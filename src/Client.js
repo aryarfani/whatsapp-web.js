@@ -1329,6 +1329,39 @@ class Client extends EventEmitter {
         });
     }
 
+    /**
+     * Returns whether this WhatsApp Web session has joined the external beta.
+     * @returns {Promise<boolean>}
+     */
+    async isBetaEnabled() {
+        return await this.pupPage.evaluate(() => {
+            return window
+                .require('WAWebUserPrefsGeneral')
+                .getWhatsAppWebExternalBetaJoinedIdb();
+        });
+    }
+
+    /**
+     * Sets external beta enrollment using WhatsApp Web's native settings action.
+     * Does not reload the page or change the currently loaded Web version.
+     * @param {boolean} enabled Whether to join the beta
+     * @returns {Promise<boolean>} Enrollment state after the action completes
+     */
+    async setBetaEnabled(enabled) {
+        if (typeof enabled !== 'boolean') {
+            throw new TypeError('enabled must be a boolean');
+        }
+        return await this.pupPage.evaluate(async (enabled) => {
+            const prefs = window.require('WAWebUserPrefsGeneral');
+            if (prefs.getWhatsAppWebExternalBetaJoinedIdb() !== enabled) {
+                await window
+                    .require('WAWebExternalBetaOptInAction')
+                    .setOptInBetaAction(enabled);
+            }
+            return prefs.getWhatsAppWebExternalBetaJoinedIdb();
+        }, enabled);
+    }
+
     async setDeviceName(deviceName, browserName) {
         (deviceName || browserName) &&
             (await this.pupPage.evaluate(
