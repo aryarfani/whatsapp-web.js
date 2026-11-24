@@ -1,13 +1,17 @@
 'use strict';
 
-exports.ExposeAuthStore = () => {
+exports.ExposeAuthStore = (loginRoute) => {
     window.AuthStore = {};
-    window.AuthStore.AppState = window.require('WAWebSocketModel').Socket;
-    window.AuthStore.Cmd = window.require('WAWebCmd').Cmd;
+    window.AuthStore.AppState = loginRoute
+        ? window.require('WAWebBackendEventBus').BackendEventBus
+        : window.require('WAWebSocketModel').Socket;
     window.AuthStore.Conn = window.require('WAWebConnModel').Conn;
-    window.AuthStore.OfflineMessageHandler = window.require(
-        'WAWebOfflineHandler',
-    ).OfflineMessageHandler;
+    if (!loginRoute) {
+        window.AuthStore.Cmd = window.require('WAWebCmd').Cmd;
+        window.AuthStore.OfflineMessageHandler = window.require(
+            'WAWebOfflineHandler',
+        ).OfflineMessageHandler;
+    }
     window.AuthStore.PairingCodeLinkUtils = window.require(
         'WAWebAltDeviceLinkingApi',
     );

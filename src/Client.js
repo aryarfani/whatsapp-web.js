@@ -147,9 +147,23 @@ class Client extends EventEmitter {
         const pairWithPhoneNumber = this.options.pairWithPhoneNumber;
         const version = await this.getWWebVersion();
 
-        await this.pupPage.evaluate(ExposeAuthStore);
+        const loginRoute = await this.pupPage.evaluate(
+            () => /^\/login\/?$/.test(window.location.pathname),
+        );
+        if (loginRoute) {
+            const readiness = await this.pupPage.waitForFunction(
+                () => {
+                    const state = window.require('WAWebBackendEventBus')
+                        ?.BackendEventBus?.socketState;
+                    return state === 'UNPAIRED' || state === 'UNPAIRED_IDLE';
+                },
+                { polling: 200, timeout },
+            );
+            await readiness.dispose();
+        }
+        await this.pupPage.evaluate(ExposeAuthStore, loginRoute);
 
-        const needAuthentication = await this.pupPage.evaluate(async () => {
+        const needAuthentication = loginRoute || await this.pupPage.evaluate(async () => {
             let state = window.require('WAWebSocketModel').Socket.state;
 
             if (
@@ -220,7 +234,7 @@ class Client extends EventEmitter {
                         return code;
                     },
                 );
-                this.requestPairingCode(
+                await this.requestPairingCode(
                     pairWithPhoneNumber.phoneNumber,
                     pairWithPhoneNumber.showNotification,
                     pairWithPhoneNumber.intervalMs,
@@ -250,7 +264,7 @@ class Client extends EventEmitter {
                     },
                 );
 
-                await this.pupPage.evaluate(async () => {
+                await this.pupPage.evaluate(async (loginRoute) => {
                     const registrationInfo =
                         await window.AuthStore.RegistrationUtils.waSignalStore.getRegistrationInfo();
                     const noiseKeyPair =
@@ -277,10 +291,13 @@ class Client extends EventEmitter {
                         ',' +
                         platform;
                     window.onQRChangedEvent(getQR(window.AuthStore.Conn.ref)); // initial qr
-                    window.AuthStore.Conn.on('change:ref', (_, ref) => {
-                        window.onQRChangedEvent(getQR(ref));
-                    }); // future QR changes
-                });
+                    if (loginRoute && window.onLoginQRRefChanged) {
+                        window.AuthStore.Conn.off('change:ref', window.onLoginQRRefChanged);
+                    }
+                    const onRefChanged = (_, ref) => window.onQRChangedEvent(getQR(ref));
+                    window.AuthStore.Conn.on('change:ref', onRefChanged);
+                    if (loginRoute) window.onLoginQRRefChanged = onRefChanged;
+                }, loginRoute);
             }
         }
 
@@ -296,10 +313,29 @@ class Client extends EventEmitter {
                     !pairWithPhoneNumber.phoneNumber
                 ) {
                     // refresh qr code
-                    window.require('WAWebCmd').Cmd.refreshQR();
+                    await this.pupPage.evaluate((loginRoute) => {
+                        if (loginRoute) {
+                            window.AuthStore.AppState.triggerRefreshQR();
+                        } else {
+                            window.require('WAWebCmd').Cmd.refreshQR();
+                        }
+                    }, loginRoute);
                 }
             },
         );
+
+        if (loginRoute) {
+            await this.pupPage.evaluate(() => {
+                const bus = window.AuthStore.AppState;
+                if (window.onLoginSocketStateChanged) {
+                    bus.off('set_socket_state', window.onLoginSocketStateChanged);
+                }
+                window.onLoginSocketStateChanged = () =>
+                    window.onAuthAppStateChangedEvent(bus.socketState);
+                bus.on('set_socket_state', window.onLoginSocketStateChanged);
+            });
+            return;
+        }
 
         await exposeFunctionIfAbsent(
             this.pupPage,
@@ -562,8 +598,8 @@ class Client extends EventEmitter {
                     clearInterval(window.codeInterval); // remove existing interval
                 }
                 window.codeInterval = setInterval(async () => {
-                    const state =
-                        window.require('WAWebSocketModel').Socket.state;
+                    const appState = window.AuthStore.AppState;
+                    const state = appState.state ?? appState.socketState;
                     if (state != 'UNPAIRED' && state != 'UNPAIRED_IDLE') {
                         clearInterval(window.codeInterval);
                         return;
